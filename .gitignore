@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.local
+.DS_Store
+*.tsbuildinfo
+.vercel
+.cache
+
+# Legacy duplicate media folders — the active app reads src/assets/memories/.
+# These were left over from a previous iteration; keep them on disk locally
+# but don't ship them into the repo or deploy.
+/images/
+/memories/
+/public/media/

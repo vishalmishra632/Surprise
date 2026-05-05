@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" aria-label="Vishal and Vanshika monogram">
+  <defs>
+    <linearGradient id="logo-stroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C0956C"/>
+      <stop offset="55%" stop-color="#E8A0B4"/>
+      <stop offset="100%" stop-color="#C0956C"/>
+    </linearGradient>
+    <linearGradient id="logo-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FDF6EC"/>
+      <stop offset="100%" stop-color="#F9C4D2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer ring -->
+  <circle cx="100" cy="100" r="86" fill="url(#logo-fill)" stroke="url(#logo-stroke)" stroke-width="1.4" opacity="0.95"/>
+  <circle cx="100" cy="100" r="80" fill="none" stroke="url(#logo-stroke)" stroke-width="0.6" opacity="0.55"/>
+
+  <!-- Heart in the center -->
+  <path d="M100 138 C 70 118 56 106 58 88 C 60 76 70 68 80 70 C 88 71 94 76 100 84 C 106 76 112 71 120 70 C 130 68 140 76 142 88 C 144 106 130 118 100 138 Z"
+        fill="url(#logo-stroke)" opacity="0.85"/>
+
+  <!-- "V + V" monogram letters -->
+  <g font-family="'Playfair Display', Georgia, serif" font-style="italic" font-weight="400" fill="#C0956C">
+    <text x="100" y="56" text-anchor="middle" font-size="22" letter-spacing="6" opacity="0.85">V &amp; V</text>
+    <text x="100" y="172" text-anchor="middle" font-size="9" letter-spacing="6" opacity="0.7" font-style="normal" font-family="'Inter', system-ui, sans-serif">EST · 26 · 04 · 2026</text>
+  </g>
+</svg>
