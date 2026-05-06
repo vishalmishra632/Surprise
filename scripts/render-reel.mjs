@@ -36,18 +36,20 @@ const ROOT = path.resolve(__dirname, '..');
 
 const args = new Set(process.argv.slice(2));
 const USE_DEV = args.has('--dev');
+const DEV_PORT = process.env.VITE_PORT || '5174';
 const TARGET_URL = USE_DEV
-  ? 'http://localhost:5173'
+  ? `http://localhost:${DEV_PORT}`
   : 'https://surprise-nine-chi.vercel.app';
 
-const SONG_PATH = path.join(ROOT, 'public/audio/satranga.mp3');
 const TMP_DIR = path.join(ROOT, 'tmp/render');
 const FINAL_PATH = path.join(ROOT, 'public/reel.mp4');
 
-// Time spent on the proposal moment after scroll completes — long
-// enough to read "Will you be my Forever?", see NO dodge twice, then
-// the YES fireworks.
-const PROPOSAL_BUDGET_S = 14;
+// Hard-coded 60s output for Instagram Reels. The user uploads the
+// silent video and Instagram's editor adds whatever song they pick.
+const TARGET_DURATION_S = 60;
+// Time spent on the proposal moment after scroll completes — enough
+// to see NO dodge twice + the YES fireworks beat.
+const PROPOSAL_BUDGET_S = 5;
 const SCROLL_FPS = 30;
 
 // ----- helpers -----
@@ -77,19 +79,10 @@ function clearDir(dir) {
 }
 
 async function render() {
-  if (!fs.existsSync(SONG_PATH)) {
-    throw new Error(
-      'public/audio/satranga.mp3 missing — drop the song there first.',
-    );
-  }
-
-  const songDuration = await probeDuration(SONG_PATH);
-  console.log(`Satranga is ${songDuration.toFixed(2)}s long.`);
-
-  const totalDuration = songDuration;
+  const totalDuration = TARGET_DURATION_S;
   const scrollDuration = Math.max(20, totalDuration - PROPOSAL_BUDGET_S);
   console.log(
-    `Scroll: ${scrollDuration.toFixed(1)}s · Proposal beat: ${PROPOSAL_BUDGET_S}s`,
+    `Target: ${totalDuration}s · Scroll: ${scrollDuration.toFixed(1)}s · Proposal beat: ${PROPOSAL_BUDGET_S}s · audio: silent`,
   );
 
   clearDir(TMP_DIR);
@@ -149,25 +142,26 @@ async function render() {
   }
   console.log('Scroll complete.');
 
-  // Settle so the proposal scene reaches full opacity and the gate
-  // animations flush.
-  await page.waitForTimeout(1500);
+  // Brief settle so the proposal scene reaches full opacity.
+  await page.waitForTimeout(900);
 
   // The NO button moves on every interaction (mouseenter / focus /
   // touchstart / click) via dodgeNo. Tapping it twice produces two
-  // visible jumps before the YES tap.
+  // visible jumps before the YES tap. Tighter cadence so the whole
+  // beat fits the 5s proposal budget.
   console.log('Tapping NO twice, then YES…');
   await page.waitForSelector('.proposal-btn-no', { timeout: 8000 });
   await page.click('.proposal-btn-no', { force: true });
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(550);
   await page.click('.proposal-btn-no', { force: true });
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(550);
   await page.click('.proposal-btn-yes', { force: true });
-  // Give the heart fireworks + "She said yes" reveal time to play out
-  // for the rest of the proposal budget.
-  const proposalUsedSoFar = 1.5 + 0.9 + 0.9 + 0.1;
-  const fireworksLeft = Math.max(2, PROPOSAL_BUDGET_S - proposalUsedSoFar);
-  await page.waitForTimeout(fireworksLeft * 1000);
+  // Heart fireworks + "She said yes" reveal — soak the rest of the
+  // proposal budget, but never more than ~3s so the file doesn't run
+  // long after YES.
+  const proposalUsedSoFar = 0.9 + 0.55 + 0.55 + 0.1;
+  const fireworksLeft = Math.max(1.5, PROPOSAL_BUDGET_S - proposalUsedSoFar);
+  await page.waitForTimeout(Math.min(3, fireworksLeft) * 1000);
 
   console.log('Closing browser to flush the recording…');
   const videoHandle = page.video();
@@ -178,33 +172,31 @@ async function render() {
   const rawVideoPath = await videoHandle.path();
   console.log(`Recorded ${path.basename(rawVideoPath)}.`);
 
-  // Mux the silent recorded WebM with the MP3, encode H.264/AAC, lock
-  // length to the song.
-  console.log(`Encoding final ${path.relative(ROOT, FINAL_PATH)}…`);
+  // Encode the recorded WebM to a silent H.264 MP4 trimmed to exactly
+  // TARGET_DURATION_S. No audio — the user adds a song in Instagram's
+  // editor on upload.
+  console.log(`Encoding final ${path.relative(ROOT, FINAL_PATH)} (silent, ${TARGET_DURATION_S}s)…`);
   ensureDir(path.dirname(FINAL_PATH));
   if (fs.existsSync(FINAL_PATH)) fs.unlinkSync(FINAL_PATH);
 
   await new Promise((resolve, reject) => {
     ffmpeg()
       .input(rawVideoPath)
-      .input(SONG_PATH)
       .outputOptions([
         '-map', '0:v:0',
-        '-map', '1:a:0',
+        '-an',           // no audio
         '-c:v', 'libx264',
         '-preset', 'medium',
-        // CRF 26 + 2.4 Mbps cap keeps a 4-5 min reel comfortably below
-        // GitHub's 100 MB per-file limit. Quality is still sharp on a
-        // phone screen at 1080×1920. Drop to crf 22 if you have a CDN.
-        '-crf', '26',
-        '-maxrate', '2400k',
-        '-bufsize', '4800k',
+        // 60s clip can run a touch higher quality than the 270s one and
+        // still fit GitHub's 100 MB cap easily — bumped maxrate so the
+        // moving road and photo edges stay crisp.
+        '-crf', '24',
+        '-maxrate', '4500k',
+        '-bufsize', '9000k',
         '-pix_fmt', 'yuv420p',
         '-r', String(SCROLL_FPS),
-        '-c:a', 'aac',
-        '-b:a', '160k',
         '-movflags', '+faststart',
-        '-t', songDuration.toFixed(3),
+        '-t', TARGET_DURATION_S.toFixed(3),
       ])
       .output(FINAL_PATH)
       .on('start', (cmd) => console.log('  ffmpeg:', cmd.split(' ').slice(0, 8).join(' '), '…'))

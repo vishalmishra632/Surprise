@@ -119,28 +119,27 @@ export function BillboardProjector() {
       // fade out gently after the camera passes it instead of an abrupt cut.
       const distance = anchor.world.distanceTo(tmpCam);
 
-      // Visibility windows. Portrait reels get a tight peak so only
-      // one same-side card sits at full opacity at a time — that's the
-      // engagement-chapter cadence the user wants for every chapter.
-      // Big chapter intros now use a much tighter window (was 30/50,
-      // now 6/12): they appear during the chapter handoff, peak briefly,
-      // and fade before the previous chapter's last billboard is still
-      // on screen — so the title plate never overlaps a photo card from
-      // the chapter before it.
+      // Visibility windows. On the 60-second portrait reel the camera
+      // moves about 2.5 world units per second, with each billboard ~2
+      // units apart. So each card has ~0.7s of "screen time" budget —
+      // the fade window has to be tight enough that one card has
+      // visibly cleared before the next reaches peak. Landscape stays
+      // generous because the wide screen carries multiple cards
+      // comfortably and the user scrolls at their own pace.
       const isBig = anchor.big;
       const isSpecial = anchor.special;
       const isPortrait = height > width;
       const fullStart = isBig ? 4 : 2;
       const fullEnd = isBig
-        ? isPortrait ? 5 : 8
+        ? isPortrait ? 4 : 8
         : isSpecial
-          ? isPortrait ? 12 : 18
-          : isPortrait ? 6 : 16;
+          ? isPortrait ? 6 : 18
+          : isPortrait ? 2.5 : 16;
       const fadeEnd = isBig
-        ? isPortrait ? 10 : 16
+        ? isPortrait ? 7 : 16
         : isSpecial
-          ? isPortrait ? 20 : 28
-          : isPortrait ? 13 : 26;
+          ? isPortrait ? 10 : 28
+          : isPortrait ? 5 : 26;
 
       let opacity = 0;
       if (!behind) {
@@ -182,10 +181,10 @@ export function BillboardProjector() {
         // because portrait viewports stack cards vertically and the
         // overlap risk is higher; landscape lingers a bit longer.
         const passWindow = isBig
-          ? 0.005
+          ? isPortrait ? 0.003 : 0.005
           : isSpecial
-            ? 0.004
-            : isPortrait ? 0.0022 : 0.0035;
+            ? isPortrait ? 0.0025 : 0.004
+            : isPortrait ? 0.0014 : 0.0035;
         const passOpacity = Math.max(0, 1 - effectivePassDelta / passWindow);
         opacity = Math.min(opacity, passOpacity);
       }
