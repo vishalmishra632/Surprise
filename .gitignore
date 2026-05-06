@@ -13,3 +13,9 @@ dist
 /images/
 /memories/
 /public/media/
+
+.vercel
+
+# scripts/render-reel.mjs scratch dir for the headless-Chromium WebM
+# before it's encoded into public/reel.mp4. Don't ship the raw video.
+/tmp/

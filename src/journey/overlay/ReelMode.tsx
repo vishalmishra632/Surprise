@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useJourneyStore } from '../store';
+
+const SCENE_WARMUP_MS = 700;
 
 type AspectKey = 'native' | '9:16' | '16:9' | '1:1' | '4:3';
 
@@ -17,18 +19,17 @@ const ASPECTS: Record<Exclude<AspectKey, 'native'>, AspectSpec> = {
   '4:3':  { width: 1440, height: 1080, label: '4 : 3',  hint: 'Classic · 1440 × 1080' },
 };
 
-// Default to a slow, cinematic 3 minutes for the auto-scroll, with the
-// user able to pick a longer/shorter pace. 60s is too quick on the
-// engagement-length journey — billboards blur past.
-const DEFAULT_DURATION_MS = 180_000;
+// Default ~90s gives roughly 1 second per billboard — readable but
+// brisk. The longer 3+ min options stay around for cinematic recordings.
+const DEFAULT_DURATION_MS = 90_000;
 const RECORD_TAIL_MS = 1_500;
 
 const DURATION_PRESETS: Array<{ ms: number; label: string }> = [
-  { ms: 60_000,  label: '1 min' },
+  { ms: 45_000,  label: '45 s' },
+  { ms: 60_000,  label: '60 s' },
+  { ms: 90_000,  label: '90 s' },
   { ms: 120_000, label: '2 min' },
   { ms: 180_000, label: '3 min' },
-  { ms: 240_000, label: '4 min' },
-  { ms: 360_000, label: '6 min' },
 ];
 
 function downloadBlob(blob: Blob, filename: string): void {
@@ -58,6 +59,19 @@ function formatMins(ms: number): string {
 }
 
 type MimeChoice = { mime: string; ext: 'mp4' | 'webm' };
+
+function detectCanRecord(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const md = navigator.mediaDevices as MediaDevices | undefined;
+  if (!md) return false;
+  return typeof md.getDisplayMedia === 'function' && typeof MediaRecorder !== 'undefined';
+}
+
+function detectIsTouch(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) return true;
+  return 'ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0;
+}
 
 function pickRecorderMime(): MimeChoice | undefined {
   // Prefer MP4 (H.264 + AAC) so the file plays everywhere — Instagram,
@@ -95,6 +109,14 @@ export function ReelMode() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [scrollDurationMs, setScrollDurationMs] = useState<number>(DEFAULT_DURATION_MS);
   const [status, setStatus] = useState<string>('');
+
+  // Capability detection — mobile browsers (iOS Safari, Android Chrome)
+  // don't expose getDisplayMedia, so the in-browser recorder won't work
+  // there. Touch-pointer devices also can't usefully render the scaled
+  // reel iframe on a small phone screen — better to send them through
+  // the native-mode auto-scroll flow + OS screen recorder instead.
+  const canRecord = useMemo(detectCanRecord, []);
+  const isTouch = useMemo(detectIsTouch, []);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -176,8 +198,12 @@ export function ReelMode() {
         }
         const elapsed = now - t0;
         const t = Math.min(1, elapsed / durationMs);
-        // ease in-out cubic — gentle ramp at both ends, steady through middle
-        const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        // Constant pace. Smoothstep / cubic ease-in-out both peak at
+        // ~1.5× average speed in the middle, which the eye reads as
+        // "the start drags, then it suddenly races." Linear keeps every
+        // billboard on screen for exactly the same number of seconds —
+        // the duration the user picked is the actual cadence they get.
+        const eased = t;
 
         const maxScroll = Math.max(
           0,
@@ -200,6 +226,18 @@ export function ReelMode() {
 
   const startAutoScroll = async () => {
     if (scrolling || recording) return;
+
+    // If the gate is still up (user tapped auto-scroll before "Walk the
+    // road"), dismiss it programmatically — the auto-scroll button is
+    // itself a user gesture, so audio playback can still latch on.
+    const store = useJourneyStore.getState();
+    if (store.gateOpen) {
+      store.openGate();
+      // Give the Scene a beat to render its first frame so the user
+      // doesn't watch the road appear three seconds in.
+      await new Promise((r) => window.setTimeout(r, SCENE_WARMUP_MS));
+    }
+
     setStatus(`auto-scrolling · ${formatMins(scrollDurationMs)} · keep this tab focused`);
     await runAutoScroll(scrollDurationMs);
     setStatus('auto-scroll done');
@@ -237,9 +275,21 @@ export function ReelMode() {
     try {
       stream = await navigator.mediaDevices.getDisplayMedia(captureRequest);
     } catch (err) {
-      console.warn('display capture cancelled', err);
-      setStatus('recording cancelled');
-      window.setTimeout(() => setStatus(''), 2400);
+      const e = err as Error & { name?: string };
+      console.warn('display capture failed', err);
+      // Surface the real reason: NotAllowedError = user dismissed,
+      // anything else (e.g. Permissions-Policy denial, codec issue) is
+      // the browser refusing on its own.
+      if (e?.name === 'NotAllowedError') {
+        setStatus('share dialog cancelled — try again, pick this tab');
+      } else if (e?.name === 'NotFoundError') {
+        setStatus('no screen surface found — make sure a window is sharable');
+      } else if (e?.message) {
+        setStatus(`record blocked · ${e.message}`);
+      } else {
+        setStatus('recording cancelled');
+      }
+      window.setTimeout(() => setStatus(''), 4000);
       return;
     }
 
@@ -377,7 +427,9 @@ export function ReelMode() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording, scrolling, open]);
 
-  const isReel = aspect !== 'native';
+  // On phones the OS chrome already provides the 9:16 frame — nesting the
+  // iframe inside a tiny scaled-down preview is unusable, so we skip it.
+  const isReel = aspect !== 'native' && !isTouch;
   const dims = isReel ? ASPECTS[aspect as Exclude<AspectKey, 'native'>] : null;
 
   return (
@@ -396,7 +448,7 @@ export function ReelMode() {
               ref={iframeRef}
               src="/?reel=1"
               title="Journey reel preview"
-              allow="autoplay; encrypted-media"
+              allow="autoplay; encrypted-media; display-capture; fullscreen; picture-in-picture; clipboard-write"
             />
           </div>
         </div>
@@ -429,33 +481,59 @@ export function ReelMode() {
             </button>
           </header>
 
-          <div className="reel-panel-section">
-            <div className="reel-panel-label">Aspect ratio</div>
-            <div className="reel-aspect-grid">
-              <button
-                type="button"
-                className={`reel-aspect ${aspect === 'native' ? 'is-active' : ''}`}
-                onClick={() => setAspect('native')}
-              >
-                <span className="reel-aspect-label">Native</span>
-                <span className="reel-aspect-hint">your full browser window</span>
-              </button>
-              {(Object.keys(ASPECTS) as Array<Exclude<AspectKey, 'native'>>).map((key) => {
-                const spec = ASPECTS[key];
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`reel-aspect ${aspect === key ? 'is-active' : ''}`}
-                    onClick={() => setAspect(key)}
-                  >
-                    <span className="reel-aspect-label">{spec.label}</span>
-                    <span className="reel-aspect-hint">{spec.hint}</span>
-                  </button>
-                );
-              })}
+          {!isTouch && (
+            <div className="reel-panel-section">
+              <div className="reel-panel-label">Aspect ratio</div>
+              <div className="reel-aspect-grid">
+                <button
+                  type="button"
+                  className={`reel-aspect ${aspect === 'native' ? 'is-active' : ''}`}
+                  onClick={() => setAspect('native')}
+                >
+                  <span className="reel-aspect-label">Native</span>
+                  <span className="reel-aspect-hint">your full browser window</span>
+                </button>
+                {(Object.keys(ASPECTS) as Array<Exclude<AspectKey, 'native'>>).map((key) => {
+                  const spec = ASPECTS[key];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`reel-aspect ${aspect === key ? 'is-active' : ''}`}
+                      onClick={() => setAspect(key)}
+                    >
+                      <span className="reel-aspect-label">{spec.label}</span>
+                      <span className="reel-aspect-hint">{spec.hint}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
+
+          {isTouch && (
+            <div className="reel-panel-section">
+              <div className="reel-panel-label">Download the reel</div>
+              <a
+                className="reel-action is-download"
+                href="/reel.mp4"
+                download="vishal-vanshika-reel.mp4"
+              >
+                ⬇ Download reel video (MP4)
+              </a>
+              <p className="reel-panel-tip">
+                One tap — saves the journey as a <em>9:16 MP4</em> with the song baked in, exactly the song's
+                length, with the proposal moment played out at the end. Drop it straight into Instagram. If your
+                browser asks where to save, pick Photos / camera roll.
+              </p>
+              <div className="reel-panel-divider">or screen-record on your phone</div>
+              <p className="reel-panel-tip">
+                Tap <em>Auto-scroll the journey</em>, then immediately start your phone's screen recorder:
+                <br />· iOS — Control Center → Screen Recording.
+                <br />· Android — Quick Settings → Screen Record.
+              </p>
+            </div>
+          )}
 
           <div className="reel-panel-section">
             <div className="reel-panel-label">Auto-scroll pace</div>
@@ -492,7 +570,7 @@ export function ReelMode() {
               >
                 Auto-scroll the journey ({formatMins(scrollDurationMs)})
               </button>
-              {isReel && (
+              {isReel && canRecord && (
                 <>
                   <button
                     type="button"
@@ -523,6 +601,15 @@ export function ReelMode() {
                   ■ Stop &amp; save
                 </button>
               )}
+              {!isTouch && (
+                <a
+                  className="reel-action is-download"
+                  href="/reel.mp4"
+                  download="vishal-vanshika-reel.mp4"
+                >
+                  ⬇ Download reel video (pre-rendered MP4)
+                </a>
+              )}
               {(scrolling || recording === 'auto') && (
                 <button type="button" className="reel-action is-cancel" onClick={cancelAll}>
                   Cancel (discard)
@@ -530,19 +617,22 @@ export function ReelMode() {
               )}
             </div>
             <p className="reel-panel-tip">
-              {isReel ? (
+              {isReel && canRecord ? (
                 <>
                   Pick <em>this tab</em> in the share dialog. On Chrome / Edge / Safari only the reel iframe is in
                   the file (panel + backdrop stay out) via Region Capture, and the recorder writes a high-bitrate
                   <em> .mp4</em> (H.264 + AAC, 25 Mbps) when the browser supports it — otherwise it falls back to
                   <em> .webm</em>.
                 </>
+              ) : isTouch ? (
+                <>
+                  Tap auto-scroll, then start your phone's screen recorder for a native-resolution capture with
+                  audio. The browser-record buttons only run on desktop Chrome / Edge / Safari.
+                </>
               ) : (
                 <>
-                  For the cleanest 1080×1920 reel, deploy this page (Vercel works in one click), open the URL on
-                  your phone in portrait, tap <em>Begin</em>, then tap <em>Auto-scroll the journey</em> and start
-                  the phone's screen recorder — the OS captures at native resolution with audio, and you can share
-                  straight to Instagram.
+                  For the cleanest 1080×1920 reel, open this URL on your phone in portrait, tap <em>Begin</em>,
+                  then tap <em>Auto-scroll the journey</em> and start the phone's screen recorder.
                 </>
               )}
             </p>

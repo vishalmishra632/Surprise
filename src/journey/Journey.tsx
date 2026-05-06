@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import Lenis from 'lenis';
 import { Scene } from './canvas/Scene';
 import { Gate } from './overlay/Gate';
+// (sceneMounted gating was removed — Scene now mounts immediately so
+// it's already drawing the road behind the gate when the user clicks.)
 import { Prompt } from './overlay/Prompt';
 import { Billboards } from './overlay/Billboards';
 import { Clouds } from './overlay/Clouds';
@@ -12,7 +14,6 @@ import { ScrollDriver } from './overlay/ScrollDriver';
 import { Outro } from './overlay/Outro';
 import { DetailView } from './overlay/DetailView';
 import { JourneyAudio } from './overlay/JourneyAudio';
-import { useJourneyStore } from './store';
 
 function useLenis() {
   useEffect(() => {
@@ -50,20 +51,14 @@ function useJourneyHeight(): number {
 
 export function Journey() {
   const heightVh = useJourneyHeight();
-  const gateOpen = useJourneyStore((s) => s.gateOpen);
-  const [sceneMounted, setSceneMounted] = useState(false);
 
   useLenis();
-
-  useEffect(() => {
-    if (!gateOpen) setSceneMounted(true);
-  }, [gateOpen]);
 
   return (
     <>
       <Gate />
       <main aria-label="A road through us">
-        {sceneMounted && <Scene />}
+        <Scene />
         <Prompt />
         <Clouds />
         <Landmarks />
